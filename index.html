@@ -105,7 +105,7 @@ header{position:sticky;top:0;z-index:30;background:rgba(251,250,246,.95);backdro
 
 /* Stats bar */
 .stats-wrap{position:relative;margin-top:-54px;z-index:3}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);background:white;border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;position:relative}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));background:white;border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;position:relative}
 .stats::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--gold3),var(--gold),var(--gold2))}
 .stat{text-align:center;padding:28px 14px;border-left:1px solid var(--line);position:relative;transition:background .3s}
 .stat:hover{background:linear-gradient(180deg,#fff,var(--mint))}
@@ -444,6 +444,7 @@ footer::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;back
       <div class="stat"><b>15</b><span>محور عمل بلدي</span></div>
       <div class="stat"><b>04</b><span>مراحل تنفيذ ومتابعة</span></div>
       <div class="stat"><b>06</b><span>مؤشرات قابلة للقياس</span></div>
+      <div class="stat" id="visitorStat" style="display:none"><b id="visitorCount">—</b><span>زائر للمنصة</span></div>
     </div>
   </div>
 
@@ -1084,7 +1085,7 @@ document.getElementById('year').textContent=new Date().getFullYear();
 */
 
 /* 👇 استبدل هذا الرابط برابط تطبيق Google Apps Script الخاص بك 👇 */
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx9bl44RZXHwFGUwGsGMDS0DjDTPx-LJ5iBKsK8cFC3zyZ5IjqaapdHFCQvEpOSmeO7/exec";
+https://script.google.com/macros/s/AKfycbyN25V8iXHE5WiLnEbDwYrk56jy5aQv1mPbD9pMA7vBCtGw_rR2fbqo9t3u_ZOCOBAm/exec";
 
 (function(){
   const form = document.getElementById('proposalForm');
@@ -1195,9 +1196,11 @@ const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx9bl44RZXHwF
 
     const data = {
       timestamp: new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Algiers' }),
+      type: 'proposal',
       axis: axisVal,
       neighborhood: neighborhoodV,
       proposal: proposalVal,
+      visitorId: (window.__flnVisitorId || 'unknown'),
       source: window.location.hostname || 'election-program'
     };
 
@@ -1225,6 +1228,125 @@ const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx9bl44RZXHwF
       submitBtn.textContent = 'إرسال الاقتراح';
     }
   });
+})();
+</script>
+
+<!-- ===== Visitor Tracking Script (يحصي كل من دخل المنصة) ===== -->
+<script>
+/*
+  ──────────────────────────────────────────────────────────────
+  تتبّع الزوار — يُرسل زيارة واحدة فريدة لكل جهاز/متصفّح
+  ──────────────────────────────────────────────────────────────
+  • يُولّد معرّف زائر فريد (visitorId) ويحفظه في localStorage.
+  • عند أول زيارة فقط يُرسل POST يحوي type='visit' إلى Google Sheet.
+  • الزيارات المتكرّرة (refresh) لا تُحسب من جديد لنفس الزائر.
+  • إن لم يدخل الزائر أي اقتراح، فإنه سيُحسب ضمن إحصاء الزوار.
+  • يتم أيضاً جلب العدد الإجمالي للزوار وعرضه في خانة الإحصائيات.
+*/
+(function(){
+  const SCRIPT_URL = (typeof GOOGLE_SCRIPT_URL !== 'undefined')
+    ? GOOGLE_SCRIPT_URL
+    : "https://script.google.com/macros/s/AKfycbx9bl44RZXHwFGUwGsGMDS0DjDTPx-LJ5iBKsK8cFC3zyZ5IjqaapdHFCQvEpOSmeO7/exec";
+
+  const VISITOR_ID_KEY  = 'fln_visitor_id';
+  const VISITED_FLAG    = 'fln_visit_logged_v1';
+
+  function getOrCreateVisitorId(){
+    let id = localStorage.getItem(VISITOR_ID_KEY);
+    if(!id){
+      id = 'v_' + Date.now().toString(36) + '_' +
+           Math.random().toString(36).slice(2, 10);
+      try { localStorage.setItem(VISITOR_ID_KEY, id); } catch(e){}
+    }
+    return id;
+  }
+
+  const visitorId = getOrCreateVisitorId();
+  window.__flnVisitorId = visitorId;
+
+  function logVisit(){
+    const already = localStorage.getItem(VISITED_FLAG);
+    if(already) { return; }
+
+    const payload = {
+      timestamp: new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Algiers' }),
+      type: 'visit',
+      visitorId: visitorId,
+      userAgent: (navigator.userAgent || '').slice(0, 200),
+      language: navigator.language || '',
+      referrer: (document.referrer || '').slice(0, 200),
+      source: window.location.hostname || 'election-program'
+    };
+
+    const body = new URLSearchParams(payload).toString();
+    fetch(SCRIPT_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: body
+    }).then(function(){
+      try { localStorage.setItem(VISITED_FLAG, '1'); } catch(e){}
+    }).catch(function(){});
+  }
+
+  function fetchVisitorCount(){
+    const statEl   = document.getElementById('visitorStat');
+    const countEl  = document.getElementById('visitorCount');
+    if(!statEl || !countEl) return;
+
+    // الطريقة الأولى: JSONP عبر وسْم script (تتجاوز CORS كلياً)
+    const cbName = 'flnVisitCb_' + Date.now();
+    window[cbName] = function(n){
+      try {
+        const num = parseInt(n, 10);
+        if(!isNaN(num) && num >= 0){
+          countEl.textContent = num.toLocaleString('ar-DZ');
+          statEl.style.display = '';
+        }
+      } catch(e){}
+      try { delete window[cbName]; } catch(x){ window[cbName] = undefined; }
+      if(script.parentNode) script.parentNode.removeChild(script);
+    };
+
+    const script = document.createElement('script');
+    script.src = SCRIPT_URL + '?action=countVisits&callback=' + cbName + '&t=' + Date.now();
+    script.onerror = function(){
+      try { delete window[cbName]; } catch(x){ window[cbName] = undefined; }
+      if(script.parentNode) script.parentNode.removeChild(script);
+
+      // الطريقة البديلة: fetch عادي (قد تعمل إن سمحت Google بـ CORS)
+      fetch(SCRIPT_URL + '?action=countVisits&t=' + Date.now(), { method: 'GET' })
+        .then(function(r){ return r.text(); })
+        .then(function(txt){
+          const num = parseInt((txt || '').trim(), 10);
+          if(!isNaN(num) && num >= 0){
+            countEl.textContent = num.toLocaleString('ar-DZ');
+            statEl.style.display = '';
+          }
+        })
+        .catch(function(){});
+    };
+    document.body.appendChild(script);
+
+    // مهلة أمان: إن لم يصل الرد خلال 5 ثوانٍ ننظّف
+    setTimeout(function(){
+      if(window[cbName]){
+        try { delete window[cbName]; } catch(x){ window[cbName] = undefined; }
+        if(script.parentNode) script.parentNode.removeChild(script);
+      }
+    }, 5000);
+  }
+
+  function init(){
+    logVisit();
+    setTimeout(fetchVisitorCount, 600);
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();
 </script>
 </body>
